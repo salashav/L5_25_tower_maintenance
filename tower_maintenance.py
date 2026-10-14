@@ -1,54 +1,104 @@
-import pickle
+
+"""Manage tower maintenance records using an in-memory SQLite database."""
+
 import sqlite3
 
+
 conn = sqlite3.connect(":memory:")
-conn.execute("CREATE TABLE towers (id INTEGER PRIMARY KEY, site TEXT, last_service INTEGER, faults INTEGER)")
-NOC_PASSWORD = "tower-noc-77"
-service_count = 0
+conn.execute(
+    """
+    CREATE TABLE towers (
+        id INTEGER PRIMARY KEY,
+        site TEXT,
+        last_service INTEGER,
+        faults INTEGER
+    )
+    """
+)
 
 
-def addTower(site, last_service, faults=0):
-    conn.execute("INSERT INTO towers (site, last_service, faults) VALUES ('%s', %d, %d)" % (site, last_service, faults))
+def add_tower(site, last_service, faults=0):
+    """Add a tower to the database."""
+    conn.execute(
+        """
+        INSERT INTO towers (site, last_service, faults)
+        VALUES (?, ?, ?)
+        """,
+        (site, last_service, faults),
+    )
     conn.commit()
 
 
-def serviceTower(tower_id, year):
-    global service_count
+def service_tower(tower_id, year):
+    """Record tower maintenance and reset its fault count."""
     try:
-        conn.execute("UPDATE towers SET last_service = ?, faults = 0 WHERE id = ?", (year, tower_id))
-        service_count += 1
-    except Exception:
-        print("service failed")
+        cursor = conn.execute(
+            """
+            UPDATE towers
+            SET last_service = ?, faults = 0
+            WHERE id = ?
+            """,
+            (year, tower_id),
+        )
+        conn.commit()
 
+        if cursor.rowcount > 0:
+            return True
+
+        print("Service failed: tower not found.")
+        return False
+
+    except sqlite3.Error as error:
+        print(f"Service failed: {error}")
+        return False
 
 
 def overdue(year):
-    rows = conn.execute("SELECT site, last_service FROM towers").fetchall()
-    result = []
-    for site, last in rows:
-        if year - last >= 2:
-            result.append(site)
-    return result
+    """Return tower sites whose last service was at least two years ago."""
+    rows = conn.execute(
+        "SELECT site, last_service FROM towers"
+    ).fetchall()
+
+    return [
+        site
+        for site, last_service in rows
+        if year - last_service >= 2
+    ]
 
 
-def riskLevel(tower_id):
-    row = conn.execute("SELECT faults FROM towers WHERE id = ?", (tower_id,)).fetchone()
+def risk_level(tower_id):
+    """Return the risk level based on the tower's fault count."""
+    row = conn.execute(
+        "SELECT faults FROM towers WHERE id = ?",
+        (tower_id,),
+    ).fetchone()
+
+    if row is None:
+        return "unknown"
+
     if row[0] > 3:
         return "high"
-    else:
-        return "normal"
+
+    return "normal"
 
 
 def snapshot():
-    return pickle.loads(pickle.dumps(conn.execute("SELECT * FROM towers").fetchall()))
+    """Return a snapshot of all tower records."""
+    return conn.execute("SELECT * FROM towers").fetchall()
 
 
 def main():
-    addTower("Ridge-A", 2021, 5)
-    addTower("Coast-B", 2024)
-    serviceTower(2, 2025)
-    total=len(snapshot())
-    print(overdue(2025), riskLevel(1), total, service_count)
+    """Run a demonstration of the tower maintenance functions."""
+    add_tower("Ridge-A", 2021, 5)
+    add_tower("Coast-B", 2024)
+
+    service_count = 0
+    if service_tower(2, 2025):
+        service_count += 1
+
+    total = len(snapshot())
+    print(overdue(2025), risk_level(1), total, service_count)
 
 
-main()
+if __name__ == "__main__":
+    main()
